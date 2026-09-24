@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseInput, validateInput, INVALID_INPUT } from './lib/validation'
+import { parseInput, validateInput, parseTolerance, INVALID_INPUT } from './lib/validation'
 
 function expectInvalidText(text: string) {
   expect(() => parseInput(text)).toThrow(INVALID_INPUT)
@@ -113,5 +113,28 @@ describe('validation — duplicates allowed', () => {
     const parsed = parseInput('{"a":[1,1,2],"b":[3,3],"targets":[4,4,5,4]}')
     expect(parsed.a).toEqual([1, 1, 2])
     expect(parsed.targets).toEqual([4, 4, 5, 4])
+  })
+})
+
+describe('parseTolerance — nearby-query tolerance', () => {
+  it('accepts integers in [0, 1000]', () => {
+    expect(parseTolerance('0')).toBe(0)
+    expect(parseTolerance('1')).toBe(1)
+    expect(parseTolerance('999')).toBe(999)
+    expect(parseTolerance('1000')).toBe(1000)
+    expect(parseTolerance(' 50 ')).toBe(50)
+    expect(parseTolerance('007')).toBe(7)
+  })
+
+  it('rejects non-integers and out-of-range values', () => {
+    expect(parseTolerance('')).toBeNull()
+    expect(parseTolerance('   ')).toBeNull()
+    expect(parseTolerance('abc')).toBeNull()
+    expect(parseTolerance('1.5')).toBeNull()
+    expect(parseTolerance('1e2')).toBeNull()
+    expect(parseTolerance('-1')).toBeNull()
+    expect(parseTolerance('+5')).toBeNull()
+    expect(parseTolerance('1001')).toBeNull()
+    expect(parseTolerance('99999999999999999999')).toBeNull()
   })
 })

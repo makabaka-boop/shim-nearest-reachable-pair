@@ -246,7 +246,7 @@ button.primary:hover:not(:disabled) {
   right: 0;
   height: 30px;
   display: grid;
-  grid-template-columns: 90px 1fr 120px;
+  grid-template-columns: 70px 1fr 90px 300px;
   align-items: center;
   padding: 0 14px;
   font-size: 13px;
@@ -290,6 +290,70 @@ button.primary:hover:not(:disabled) {
 
 .is-reachable .cell-target::before {
   content: '';
+}
+
+/* Nearby-spec query */
+.nearby-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.tolerance-input {
+  width: 110px;
+  background: #0c111c;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-size: 12.5px;
+}
+
+.tolerance-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(79, 140, 255, 0.25);
+}
+
+.tolerance-input.is-invalid {
+  border-color: var(--bad);
+}
+
+.tolerance-hint {
+  color: var(--bad);
+  font-size: 12px;
+}
+
+.cell-nearby {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.nearby-button {
+  padding: 2px 8px;
+  font-size: 12px;
+  border-radius: 5px;
+}
+
+.nearby-result.is-found {
+  color: var(--ok);
+}
+
+.nearby-result.is-none {
+  color: var(--warn);
+}
+
+.nearby-result.is-pending {
+  color: var(--muted);
 }
 
 .page-footer {

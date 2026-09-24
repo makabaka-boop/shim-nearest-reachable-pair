@@ -22,6 +22,9 @@ export const TARGET_MAX = 400_000
 export const TARGET_LIST_MIN_LEN = 1
 export const TARGET_LIST_MAX_LEN = 100_000
 
+export const TOLERANCE_MIN = 0
+export const TOLERANCE_MAX = 1000
+
 export const INVALID_INPUT = 'INVALID_INPUT'
 
 export interface ReachabilityInput {
@@ -64,6 +67,21 @@ export function validateInput(data: unknown): ReachabilityInput {
   const b = validateIntegerArray(obj.b, SHIM_LIST_MIN_LEN, SHIM_LIST_MAX_LEN, SHIM_MIN, SHIM_MAX)
   const targets = validateIntegerArray(obj.targets, TARGET_LIST_MIN_LEN, TARGET_LIST_MAX_LEN, TARGET_MIN, TARGET_MAX)
   return { a, b, targets }
+}
+
+/**
+ * Parse a nearby-query tolerance string: must be a base-10 integer in
+ * [TOLERANCE_MIN, TOLERANCE_MAX] micrometers. Returns null when invalid;
+ * callers then keep the previous valid nearby query untouched.
+ */
+export function parseTolerance(text: string): number | null {
+  const trimmed = text.trim()
+  if (!/^\d+$/.test(trimmed)) return null
+  const value = Number(trimmed)
+  if (!Number.isInteger(value) || value < TOLERANCE_MIN || value > TOLERANCE_MAX) {
+    return null
+  }
+  return value
 }
 
 function validateIntegerArray(

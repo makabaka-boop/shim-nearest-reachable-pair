@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { solve } from './lib/solver'
+import { solve, buildIndex, nearestReachable, type NearbyHit } from './lib/solver'
 
 /**
  * Naive O(|A|·|B|) reference. Only used on small samples in tests;
@@ -226,5 +226,177 @@ describe('solver — result shape', () => {
     expect(reachable).toEqual([true, true, true, true, true, true])
     const targets2 = [12, 11, 12, 4, 11]
     expect(solve(a, b, targets2).reachable).toEqual([false, true, false, false, true])
+  })
+})
+
+/**
+ * Naive O(|A|·|B|) reference for the nearby-spec query. Only used on small
+ * samples in tests; the production query must never enumerate pairs.
+ * Selection order: smallest |total - target|, then smaller total, then
+ * smaller A-level spec.
+ */
+function naiveNearest(
+  a: number[],
+  b: number[],
+  target: number,
+  tolerance: number,
+): NearbyHit | null {
+  let best: NearbyHit | null = null
+  for (const x of a) {
+    for (const y of b) {
+      const total = x + y
+      const deviation = total - target
+      if (Math.abs(deviation) > tolerance) continue
+      if (
+        best === null ||
+        Math.abs(deviation) < Math.abs(best.deviation) ||
+        (Math.abs(deviation) === Math.abs(best.deviation) && total < best.total) ||
+        (Math.abs(deviation) === Math.abs(best.deviation) &&
+          total === best.total &&
+          x < best.a)
+      ) {
+        best = { total, a: x, b: y, deviation }
+      }
+    }
+  }
+  return best
+}
+
+function checkNearest(a: number[], b: number[], target: number, tolerance: number) {
+  const hit = nearestReachable(buildIndex(a, b), target, tolerance)
+  const expected = naiveNearest(a, b, target, tolerance)
+  expect(hit).toEqual(expected)
+  if (hit !== null) {
+    // The witness must be a genuine pair from the two levels.
+    expect(a).toContain(hit.a)
+    expect(b).toContain(hit.b)
+    expect(hit.a + hit.b).toBe(hit.total)
+    expect(hit.deviation).toBe(hit.total - target)
+  }
+}
+
+describe('nearestReachable — small Cartesian product vs naive', () => {
+  // Includes duplicates, zeroes, and uneven side lengths (which force the
+  // internal A/B swap in both directions).
+  const aCases = [
+    [0],
+    [5],
+    [0, 1],
+    [1, 3],
+    [0, 2, 5],
+    [3, 3, 7],
+    [0, 4, 4, 9],
+    [2, 5, 5, 8, 11],
+  ]
+  const bCases = [
+    [0],
+    [7],
+    [0, 2],
+    [1, 1, 4],
+    [2, 5],
+    [0, 0, 6],
+    [1, 3, 3],
+  ]
+  const tolerances = [0, 1, 2, 3, 5, 8, 1000]
+
+  for (const a of aCases) {
+    for (const b of bCases) {
+      for (let target = 0; target <= 16; target++) {
+        for (const tolerance of tolerances) {
+          it(`a=[${a}] b=[${b}] target=${target} tol=${tolerance}`, () => {
+            checkNearest(a, b, target, tolerance)
+          })
+        }
+      }
+    }
+  }
+})
+
+describe('nearestReachable — selection order', () => {
+  it('prefers the smaller total when both sides deviate equally', () => {
+    // sums: 8 and 12, both |dev| = 2 from target 10 → pick 8
+    const hit = nearestReachable(buildIndex([0], [8, 12]), 10, 2)
+    expect(hit).toEqual({ total: 8, a: 0, b: 8, deviation: -2 })
+  })
+
+  it('prefers the exact sum over any deviation', () => {
+    const hit = nearestReachable(buildIndex([0, 4], [3, 9]), 7, 1000)
+    expect(hit).toEqual({ total: 7, a: 4, b: 3, deviation: 0 })
+  })
+
+  it('prefers the smaller A spec when pairs share the same total', () => {
+    // total 7 reachable as (1, 6) and (4, 3) → A = 1
+    const hit = nearestReachable(buildIndex([1, 4], [3, 6]), 7, 0)
+    expect(hit).toEqual({ total: 7, a: 1, b: 6, deviation: 0 })
+  })
+
+  it('keeps original A/B identity when the sides are swapped internally', () => {
+    // |A| > |B| forces the swap; total 7 reachable as (1, 6) and (4, 3).
+    const hit = nearestReachable(buildIndex([1, 4, 9], [3, 6]), 7, 0)
+    expect(hit).toEqual({ total: 7, a: 1, b: 6, deviation: 0 })
+    // Same sums with A as the reversed side: total 7 as (3, 4) and (6, 1).
+    const hit2 = nearestReachable(buildIndex([3, 6], [1, 4, 9]), 7, 0)
+    expect(hit2).toEqual({ total: 7, a: 3, b: 4, deviation: 0 })
+  })
+
+  it('returns null when nothing is reachable within tolerance', () => {
+    expect(nearestReachable(buildIndex([0], [0]), 5, 3)).toBeNull()
+    expect(nearestReachable(buildIndex([10], [20]), 0, 29)).toBeNull()
+  })
+})
+
+describe('nearestReachable — zeroes, duplicates, boundaries', () => {
+  it('zero shims sum to zero with zero deviation', () => {
+    const hit = nearestReachable(buildIndex([0], [0]), 0, 0)
+    expect(hit).toEqual({ total: 0, a: 0, b: 0, deviation: 0 })
+  })
+
+  it('target zero only searches upward', () => {
+    const hit = nearestReachable(buildIndex([0, 4], [1, 9]), 0, 1000)
+    expect(hit).toEqual({ total: 1, a: 0, b: 1, deviation: 1 })
+  })
+
+  it('duplicate specs collapse and still yield a usable pair', () => {
+    const hit = nearestReachable(buildIndex([5, 5, 5], [7, 7]), 12, 0)
+    expect(hit).toEqual({ total: 12, a: 5, b: 7, deviation: 0 })
+  })
+
+  it('tolerance 0 requires an exact hit', () => {
+    expect(nearestReachable(buildIndex([0, 3], [1, 2]), 4, 0)).toEqual({
+      total: 4,
+      a: 3,
+      b: 1,
+      deviation: 0,
+    })
+    expect(nearestReachable(buildIndex([0, 3], [1, 2]), 6, 0)).toBeNull()
+  })
+
+  it('tolerance 1000 admits a deviation of exactly 1000', () => {
+    const hit = nearestReachable(buildIndex([200000], [200000]), 399000, 1000)
+    expect(hit).toEqual({ total: 400000, a: 200000, b: 200000, deviation: 1000 })
+    expect(nearestReachable(buildIndex([200000], [200000]), 398999, 1000)).toBeNull()
+  })
+
+  it('maximum target boundary', () => {
+    const hit = nearestReachable(buildIndex([200000], [200000]), 400000, 0)
+    expect(hit).toEqual({ total: 400000, a: 200000, b: 200000, deviation: 0 })
+  })
+
+  it('reuses one index for batch and nearby queries consistently', () => {
+    const a = [0, 3, 50, 200000]
+    const b = [0, 1, 9, 100, 200000]
+    const index = buildIndex(a, b)
+    const targets = [0, 1, 3, 4, 53, 300, 200000, 400000, 0]
+    const { reachable } = solve(a, b, targets)
+    for (let i = 0; i < targets.length; i++) {
+      const hit = nearestReachable(index, targets[i], 0)
+      if (reachable[i]) {
+        expect(hit).not.toBeNull()
+        expect(hit!.deviation).toBe(0)
+        expect(hit!.a + hit!.b).toBe(targets[i])
+      } else {
+        expect(hit).toBeNull()
+      }
+    }
   })
 })
