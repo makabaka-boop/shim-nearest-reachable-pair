@@ -22,6 +22,10 @@ export const TARGET_MAX = 400_000
 export const TARGET_LIST_MIN_LEN = 1
 export const TARGET_LIST_MAX_LEN = 100_000
 
+/** Nearest-spec ("邻近可达规格") query tolerance bounds, in μm. */
+export const TOLERANCE_MIN = 0
+export const TOLERANCE_MAX = 1_000
+
 export const INVALID_INPUT = 'INVALID_INPUT'
 
 export interface ReachabilityInput {
@@ -84,4 +88,25 @@ function validateIntegerArray(
     result[i] = item
   }
   return result
+}
+
+/**
+ * Parse a nearest-spec tolerance draft. Only a non-empty decimal integer
+ * string in [0, 1000] μm is accepted; anything else (blank, whitespace
+ * only, signs, exponents, decimals, out of range) returns null. An
+ * invalid tolerance never invalidates the committed input — the UI keeps
+ * the previous valid nearby query instead.
+ */
+export function parseTolerance(text: string): number | null {
+  const trimmed = text.trim()
+  if (!/^\d+$/.test(trimmed)) return null
+  const value = Number(trimmed)
+  if (
+    !Number.isInteger(value) ||
+    value < TOLERANCE_MIN ||
+    value > TOLERANCE_MAX
+  ) {
+    return null
+  }
+  return value
 }

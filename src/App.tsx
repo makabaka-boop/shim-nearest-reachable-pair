@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import type { SolveRequest, SolveResponse } from './solver.worker'
+import type { WorkerRequest, WorkerResponse } from './solver.worker'
 import { VirtualResults } from './components/VirtualResults'
+import {
+  initialNearbyState,
+  nearbyReducer,
+  type NearbyUiState,
+} from './components/nearbyState'
+import { parseTolerance } from './lib/validation'
 
 type Status =
   | { kind: 'idle' }
@@ -30,6 +36,7 @@ export default function App() {
   const [status, setStatus] = useState<Status>({ kind: 'idle' })
   const [targets, setTargets] = useState<number[]>([])
   const [reachable, setReachable] = useState<boolean[]>([])
+  const [nearby, setNearby] = useState<NearbyUiState>(initialNearbyState)
   const workerRef = useRef<Worker | null>(null)
   const requestIdRef = useRef(0)
 
@@ -39,8 +46,27 @@ export default function App() {
     })
     workerRef.current = worker
 
-    worker.onmessage = (event: MessageEvent<SolveResponse>) => {
+    worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
       const res = event.data
+      if (res.kind === 'nearby') {
+        // Per-row nearest-spec reply. The reducer drops it unless it is the
+        // row's current request under the current input token, so a late
+        // reply from a replaced input can never resurrect an old witness.
+        setNearby((prev) =>
+          nearbyReducer(prev, {
+            type: 'response',
+            id: res.id,
+            token: res.token,
+            targetIndex: res.targetIndex,
+            found: res.found,
+            witness: res.found
+              ? { a: res.a, b: res.b, deviation: res.deviation }
+              : null,
+          }),
+        )
+        return
+      }
+      if (res.kind === 'nearby-error') return
       if (res.id !== requestIdRef.current) return // discard stale responses
       if (res.kind === 'ok') {
         let count = 0
@@ -75,10 +101,12 @@ export default function App() {
     const id = ++requestIdRef.current
     setStatus({ kind: 'running' })
     // Drop any previous answers up front so stale results never linger
-    // while the new (potentially invalid) request is handled.
+    // while the new (potentially invalid) request is handled. Committing a
+    // new input also revokes every nearby witness of the previous input.
     setTargets([])
     setReachable([])
-    const request: SolveRequest = { id, text: value }
+    setNearby((prev) => nearbyReducer(prev, { type: 'batch-start' }))
+    const request: WorkerRequest = { id, kind: 'batch', text: value }
     worker.postMessage(request)
   }
 
@@ -88,6 +116,37 @@ export default function App() {
     // Commit pasted text, then compute on the next frame.
     requestAnimationFrame(() => computeWith(pasted))
   }
+
+  function handleNearbyDraftChange(index: number, value: string) {
+    setNearby((prev) => nearbyReducer(prev, { type: 'draft', index, value }))
+  }
+
+  function handleNearbyQuery(index: number, target: number) {
+    const worker = workerRef.current
+    if (!worker || status.kind !== 'ok') return
+    const row = nearby.rows[index]
+    const tolerance = parseTolerance(row?.draft ?? '')
+    if (tolerance === null) {
+      // Invalid tolerance: keep the row's previous valid query result.
+      setNearby((prev) =>
+        nearbyReducer(prev, { type: 'invalid-tolerance', index }),
+      )
+      return
+    }
+    const id = ++requestIdRef.current
+    const request: WorkerRequest = {
+      kind: 'nearby',
+      id,
+      token: nearby.token,
+      targetIndex: index,
+      target,
+      tolerance,
+    }
+    worker.postMessage(request)
+    setNearby((prev) => nearbyReducer(prev, { type: 'submit', index, id }))
+  }
+
+  const nearbyEnabled = status.kind === 'ok'
 
   return (
     <div className="page">
@@ -138,6 +197,7 @@ export default function App() {
                 setText('')
                 setTargets([])
                 setReachable([])
+                setNearby((prev) => nearbyReducer(prev, { type: 'reset' }))
                 setStatus({ kind: 'idle' })
               }}
               disabled={status.kind === 'running'}
@@ -175,6 +235,12 @@ export default function App() {
 
         <section className="panel results-panel">
           <h2>结果（按目标原序，含重复项）</h2>
+          <p className="hint">
+            每行可查询<strong>邻近可达规格</strong>：输入 0–1000 μm
+            的整数容差，在目标 ± 容差内取与目标差值最小的可达总厚度
+            （并列取较小总厚度，再并列取较小 A 级规格），返回 A、B
+            规格与有符号偏差。
+          </p>
           {targets.length === 0 ? (
             <div className="empty-results">
               {status.kind === 'invalid' || status.kind === 'error'
@@ -187,15 +253,24 @@ export default function App() {
                 <span className="cell-index">序号</span>
                 <span className="cell-target">target</span>
                 <span className="cell-verdict">reachable</span>
+                <span className="cell-nearby">邻近可达规格（容差 μm）</span>
               </div>
-              <VirtualResults targets={targets} reachable={reachable} />
+              <VirtualResults
+                targets={targets}
+                reachable={reachable}
+                nearbyRows={nearby.rows}
+                nearbyEnabled={nearbyEnabled}
+                onNearbyDraftChange={handleNearbyDraftChange}
+                onNearbyQuery={handleNearbyQuery}
+              />
             </div>
           )}
         </section>
       </main>
 
       <footer className="page-footer">
-        精确求解：两侧编码为 BigInt 位集，按目标移位并按位与判定，不枚举全部数对。
+        精确求解：两侧编码为 BigInt 位集，按目标移位并按位与判定，不枚举全部数对；
+        邻近查询复用同一位集提取命中见证。
       </footer>
     </div>
   )

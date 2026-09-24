@@ -244,9 +244,9 @@ button.primary:hover:not(:disabled) {
   position: absolute;
   left: 0;
   right: 0;
-  height: 30px;
+  height: 64px;
   display: grid;
-  grid-template-columns: 90px 1fr 120px;
+  grid-template-columns: 70px 1fr 100px 360px;
   align-items: center;
   padding: 0 14px;
   font-size: 13px;
@@ -290,6 +290,82 @@ button.primary:hover:not(:disabled) {
 
 .is-reachable .cell-target::before {
   content: '';
+}
+
+/* Per-row nearest reachable spec query */
+.cell-nearby {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  justify-content: center;
+  min-width: 0;
+}
+
+.header-row .cell-nearby {
+  display: block;
+}
+
+.nearby-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.nearby-input {
+  width: 74px;
+  background: #0c111c;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-size: 12.5px;
+}
+
+.nearby-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(79, 140, 255, 0.25);
+}
+
+.nearby-input:disabled {
+  opacity: 0.5;
+}
+
+.nearby-button {
+  padding: 4px 12px;
+  font-size: 12.5px;
+}
+
+.nearby-verdict-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-height: 14px;
+}
+
+.nearby-verdict {
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nearby-verdict.done {
+  color: var(--accent);
+}
+
+.nearby-verdict.none {
+  color: var(--muted);
+}
+
+.nearby-verdict.running {
+  color: var(--warn);
+}
+
+.nearby-verdict.invalid {
+  color: var(--bad);
 }
 
 .page-footer {

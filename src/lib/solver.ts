@@ -19,6 +19,17 @@
  * shorter/narrower). Repeated input values are the same shim specification
  * and are deduplicated. Targets keep original order and duplicates; their
  * answers are cached so repeated targets share one query.
+ *
+ * A prepared solver additionally answers "nearest reachable spec" queries:
+ * given a target and an integer tolerance, find the reachable total within
+ * [target - tolerance, target + tolerance] that
+ *   1. minimises |sum - target|,
+ *   2. breaks ties towards the smaller total,
+ *   3. breaks further ties towards the smaller A-level spec.
+ * The winning pair is extracted from the hit bitset (lowest set bit, or
+ * highest when the levels were swapped internally), still without
+ * enumerating A × B pairs, and the internal small/large swap is undone so
+ * the reported pair always keeps the caller's original A/B identity.
  */
 
 import { TARGET_MAX } from './validation'
@@ -79,11 +90,63 @@ export interface SolveResult {
 }
 
 /**
- * Decide reachability for all targets.
- * Worst case measured well under the 6-second budget at the maximum
- * 100 000 × 100 000 input on commodity hardware.
+ * Witness of a nearest reachable total: the A-level and B-level shim specs
+ * (in the caller's original A/B identity) and the signed deviation of their
+ * sum from the queried target.
  */
-export function solve(a: readonly number[], b: readonly number[], targets: readonly number[]): SolveResult {
+export interface NearestWitness {
+  a: number
+  b: number
+  /** (a + b) - target: negative below, positive above, zero when exact. */
+  deviation: number
+}
+
+export interface PreparedSolver {
+  /** Distinct shim values in each level, sorted ascending. */
+  readonly distinctA: number[]
+  readonly distinctB: number[]
+  /** reachable[i] corresponds to targets[i], in original order. */
+  solveTargets(targets: readonly number[]): boolean[]
+  /**
+   * Nearest reachable total within ±tolerance of `target`, selected by
+   * (min |deviation|, then smaller total, then smaller A spec).
+   * Returns null when no sum in range is reachable.
+   */
+  findNearest(target: number, tolerance: number): NearestWitness | null
+}
+
+const WORD_MASK = (1n << BigInt(WORD_BITS)) - 1n
+
+/** Index of the lowest set bit of a non-zero mask. */
+function lowestSetBit(mask: bigint): number {
+  let rest = mask
+  let index = 0
+  while ((rest & WORD_MASK) === 0n) {
+    rest >>= BigInt(WORD_BITS)
+    index += WORD_BITS
+  }
+  // Isolate the lowest set bit of the chunk, then measure its position.
+  const chunk = Number(rest & WORD_MASK)
+  const lowest = chunk & -chunk
+  return index + (31 - Math.clz32(lowest))
+}
+
+/** Index of the highest set bit of a non-zero mask. */
+function highestSetBit(mask: bigint): number {
+  let rest = mask
+  let index = 0
+  while (rest > WORD_MASK) {
+    rest >>= BigInt(WORD_BITS)
+    index += WORD_BITS
+  }
+  return index + (31 - Math.clz32(Number(rest)))
+}
+
+/**
+ * Preprocess A and B once (dedupe, sort, build bitsets) so that both batch
+ * reachability checks and per-row nearest-spec queries reuse the same masks.
+ */
+export function prepareSolver(a: readonly number[], b: readonly number[]): PreparedSolver {
   const sortedA = dedupeSorted(a)
   const sortedB = dedupeSorted(b)
 
@@ -101,32 +164,90 @@ export function solve(a: readonly number[], b: readonly number[], targets: reado
   const reversedLarge = buildReversedBitset(large, maxLarge)
   const delta = BigInt(maxLarge)
 
-  const cache = new Map<number, boolean>()
-  const reachable = new Array<boolean>(targets.length)
-
-  for (let i = 0; i < targets.length; i++) {
-    const t = targets[i]
-    const cached = cache.get(t)
-    if (cached !== undefined) {
-      reachable[i] = cached
-      continue
-    }
-    let hit: boolean
-    if (t > spanMax) {
-      hit = false
-    } else {
-      const shifted =
-        t <= maxLarge
-          ? maskSmall << (delta - BigInt(t))
-          : maskSmall >> (BigInt(t) - delta)
-      hit = (shifted & reversedLarge) !== 0n
-    }
-    cache.set(t, hit)
-    reachable[i] = hit
+  /**
+   * Hit bitset for a candidate sum t: bit p is set iff some pair sums to t.
+   * Returns 0n when t cannot be formed at all.
+   */
+  function hitsAt(t: number): bigint {
+    if (t > spanMax) return 0n
+    const shifted =
+      t <= maxLarge
+        ? maskSmall << (delta - BigInt(t))
+        : maskSmall >> (BigInt(t) - delta)
+    return shifted & reversedLarge
   }
 
-  // Note: reachability is symmetric, so swapping sides only decides which
-  // mask gets shifted per query. The reported distinct lists always keep
-  // their original A/B identity regardless of this internal swap.
-  return { reachable, distinctA: sortedA, distinctB: sortedB }
+  function solveTargets(targets: readonly number[]): boolean[] {
+    const cache = new Map<number, boolean>()
+    const reachable = new Array<boolean>(targets.length)
+    for (let i = 0; i < targets.length; i++) {
+      const t = targets[i]
+      const cached = cache.get(t)
+      if (cached !== undefined) {
+        reachable[i] = cached
+        continue
+      }
+      const hit = hitsAt(t) !== 0n
+      cache.set(t, hit)
+      reachable[i] = hit
+    }
+    return reachable
+  }
+
+  /**
+   * Extract the winning pair from the hit bitset of `sum`. Bit p of a hit
+   * corresponds to large-side value (maxLarge - p) and small-side value
+   * (sum - maxLarge + p):
+   *   - not swapped (A is the shifted small side): the smallest A value
+   *     sits at the lowest set bit;
+   *   - swapped (A is the reversed large side): it sits at the highest
+   *     set bit.
+   * The swap is undone here so the returned pair keeps the caller's
+   * original A/B identity regardless of the internal orientation.
+   */
+  function witnessFor(target: number, sum: number, hits: bigint): NearestWitness {
+    const bit = swapped ? highestSetBit(hits) : lowestSetBit(hits)
+    const largeValue = maxLarge - bit
+    const smallValue = sum - largeValue
+    const aValue = swapped ? largeValue : smallValue
+    const bValue = swapped ? smallValue : largeValue
+    return { a: aValue, b: bValue, deviation: sum - target }
+  }
+
+  function findNearest(target: number, tolerance: number): NearestWitness | null {
+    // Probe sums in order of increasing |deviation|; at the same distance
+    // the smaller total (target - d) is probed before the larger one, so
+    // the first hit already satisfies tie-breaks 1 and 2.
+    for (let d = 0; d <= tolerance; d++) {
+      const lo = target - d
+      if (lo >= 0) {
+        const hits = hitsAt(lo)
+        if (hits !== 0n) return witnessFor(target, lo, hits)
+      }
+      if (d === 0) continue
+      const hi = target + d
+      if (hi <= TARGET_MAX) {
+        const hits = hitsAt(hi)
+        if (hits !== 0n) return witnessFor(target, hi, hits)
+      }
+      if (lo < 0 && hi > TARGET_MAX) break
+    }
+    return null
+  }
+
+  return { distinctA: sortedA, distinctB: sortedB, solveTargets, findNearest }
+}
+
+/**
+ * Decide reachability for all targets.
+ * Worst case measured well under the 6-second budget at the maximum
+ * 100 000 × 100 000 input on commodity hardware.
+ */
+export function solve(a: readonly number[], b: readonly number[], targets: readonly number[]): SolveResult {
+  const prepared = prepareSolver(a, b)
+  return {
+    reachable: prepared.solveTargets(targets),
+    distinctA: prepared.distinctA,
+    distinctB: prepared.distinctB,
+  }
 }
